@@ -1,100 +1,83 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from mongoengine import connect
-from datetime import datetime
-from jose import JWTError, jwt
-
-# Import models
+from pydantic import BaseModel, Field
+from typing import List
 from .models import AdminUser
+from .utils import create_access_token
 
-# JWT Secret Key for token creation and validation
-SECRET_KEY = "erw#4342@rewrwer"
-ALGORITHM = "HS256"
-
-# Create router
 router = APIRouter()
 
-# Pydantic model for the request body validation
-class AdminApprovalRequest(BaseModel):
-    user_id: str
+class CreateAdminUser(BaseModel):
     first_name: str
     last_name: str
+    user_name: str = Field(..., min_length=1, max_length=50)  
     email: str
     phone: str
-    verification_status: bool
-    email_note: str
-    approved_by: str
-
-class AdminApprovalResponse(BaseModel):
     status: bool
-    status_code: int
-    description: str
-    data: list
+    roles: List[str]
+    profile_image: str
 
-# Connect to MongoDB
-connect('new')
+def generate_user_id():
+    
+    user_count = AdminUser.objects.count() + 1  
+    return f"user_{user_count}"
 
-# Function to create JWT token (for simplicity)
-def create_access_token(data: dict):
-    encoded_jwt = jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+@router.post("/admin/update")
+async def update_user(user_data: CreateAdminUser):
+    
+    if not user_data.user_name or user_data.user_name.strip() == "":
+        raise HTTPException(status_code=400, detail="User name is required and cannot be empty")
 
-# Route to approve or reject admin account (and create if not found)
-@router.post("/admin/account/approval", response_model=AdminApprovalResponse)
-async def approve_admin_account(request: AdminApprovalRequest):
-    # Find the user by ID, if exists
-    user = AdminUser.objects(user_id=request.user_id).first()
+    try:
+        
+        existing_user = AdminUser.objects(user_name=user_data.user_name).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User with this user_name already exists.")
 
-    if not user:
-        # If user doesn't exist, create a new one
-        user = AdminUser(
-            user_id=request.user_id,
-            first_name=request.first_name,
-            last_name=request.last_name,
-            email=request.email,
-            phone=request.phone,
-            verification_status=request.verification_status,
-            email_note=request.email_note,
-            approved_by=request.approved_by,
-            roles=["Admin"],  # default roles
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+        
+        user_id = generate_user_id()
+
+        
+        new_user = AdminUser(
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+            user_name=user_data.user_name,
+            email=user_data.email,
+            phone=user_data.phone,
+            status=user_data.status,
+            roles=user_data.roles,
+            profile_image=user_data.profile_image,
+            user_id=user_id
         )
-        user.save()  # Save the newly created user in the database
 
-    # Update the user details (in case the user was found)
-    user.first_name = request.first_name
-    user.last_name = request.last_name
-    user.email = request.email
-    user.phone = request.phone
-    user.verification_status = request.verification_status
-    user.email_note = request.email_note
-    user.approved_by = request.approved_by
-    user.updated_at = datetime.utcnow()
+        
+        new_user.save()
 
-    # Save the updated user record
-    user.save()
+        
+        access_token = create_access_token(data={"sub": new_user.user_id})
 
-    # Return response with the updated user information
-    response_data = {
-        "status": True,
-        "status_code": 200,
-        "description": "Admin account created/updated",
-        "data": [{
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "user_id": user.user_id,
-            "email": user.email,
-            "phone": user.phone,
-            "status": user.verification_status,
-            "roles": user.roles,
-            "created_at": user.created_at.isoformat(),
-            "created_by": user.created_by,
-            "updated_at": user.updated_at.isoformat(),
-            "updated_by": user.updated_by,
-            "profile_image": user.profile_image,
-            "verification_status": user.verification_status
-        }]
-    }
+        
+        return {
+            "status": True,
+            "status_code": 200,
+            "description": "Admin account created successfully",
+            "data": [
+                {
+                    "first_name": new_user.first_name,
+                    "last_name": new_user.last_name,
+                    "user_name": new_user.user_name,
+                    "user_id": new_user.user_id,
+                    "email": new_user.email,
+                    "phone": new_user.phone,
+                    "status": new_user.status,
+                    "roles": new_user.roles,
+                    "created_at": new_user.created_at,
+                    "updated_at": new_user.updated_at,
+                    "profile_image": new_user.profile_image,
+                    "verification_status": new_user.verification_status,
+                    "access_token": access_token  # Generated JWT Token
+                }
+            ]
+        }
 
-    return response_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
