@@ -1,22 +1,24 @@
-from mongoengine import Document, StringField, BooleanField, ListField, DateTimeField
-import datetime
+from mongoengine import Document, StringField, ListField, BooleanField, DateTimeField
+from datetime import datetime
 
-
-from mongoengine import connect
-connect("new", host="localhost", port=27017)  
 
 class AdminUser(Document):
-    user_id = StringField(required=True, unique=True)
     first_name = StringField(required=True)
     last_name = StringField(required=True)
-    user_name = StringField(required=True, unique=True)
-    email = StringField(required=True)
+    user_id = StringField(required=True, unique=True)
+    email = StringField(required=True, unique=True)
     phone = StringField(required=True)
+    password_hash = StringField(required=True) 
     status = BooleanField(default=True)
-    roles = ListField(StringField(), default=["admin"])
-    profile_image = StringField()
-    created_at = DateTimeField(default=datetime.datetime.utcnow)
-    updated_at = DateTimeField(default=datetime.datetime.utcnow)
-    verification_status = BooleanField(default=True)
+    roles = ListField(StringField(), default=["Admin"])
+    created_at = DateTimeField(default=datetime.utcnow)
+    created_by = StringField(default="")
+    updated_at = DateTimeField(default=datetime.utcnow)
+    updated_by = StringField(default="")
+    profile_image = StringField(default="")
+    verification_status = BooleanField(default=False)
+    access_token = StringField(default="")
 
-    meta = {'indexes': ['user_name']}  
+    meta = {
+        'collection': 'admin_users'  
+    }
