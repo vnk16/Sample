@@ -11,14 +11,14 @@ from fastapi.security import OAuth2PasswordBearer
 router = APIRouter(prefix="/admin", tags=["Admin"])
 otp_router = APIRouter(prefix="/admin/otp", tags=["OTP"])
 
-# Configuration
+
 SECRET_KEY = os.getenv("SECRET_KEY", "asdfgh")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/login")
 
-# Request Models
+
 class AdminCreateRequest(BaseModel):
     first_name: str
     last_name: str
@@ -39,7 +39,7 @@ class OTPResendRequest(BaseModel):
     email: EmailStr
     user_id: str
 
-# Response Models
+
 class AdminCreateResponse(BaseModel):
     status: bool
     status_code: int
@@ -64,7 +64,7 @@ class OTPResendResponse(BaseModel):
     description: str
     data: dict
 
-# Utility Functions
+
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
@@ -73,7 +73,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
 async def create_otp_record(email: str, user_id: str):
     OTPStorage.objects(email=email).delete()
-    otp_code = "3812"  # Fixed OTP for testing
+    otp_code = "3812"  
     expires_at = datetime.utcnow() + timedelta(minutes=5)
     OTPStorage(
         email=email,
@@ -81,10 +81,10 @@ async def create_otp_record(email: str, user_id: str):
         otp_code=otp_code,
         expires_at=expires_at
     ).save()
-    print(f"OTP for {email}: {otp_code}")  # For testing only
+    print(f"OTP for {email}: {otp_code}")  
     return otp_code
 
-# Dependency
+
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=401,
@@ -103,7 +103,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
-# Routes
 
 @router.post("/create", response_model=AdminCreateResponse)
 def create_admin_user(request: AdminCreateRequest):
