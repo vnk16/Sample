@@ -7,7 +7,7 @@ class AdminUser(Document):
     user_id = StringField(required=True, unique=True)
     email = StringField(required=True, unique=True)
     phone = StringField(required=True, unique=True)
-    password = StringField(required=True)  # Hashed password stored here
+    password = StringField(required=True)  
     status = BooleanField(default=True)
     roles = ListField(StringField(), default=list)
     created_at = DateTimeField(default=datetime.utcnow)
