@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
@@ -11,14 +11,14 @@ from fastapi.security import OAuth2PasswordBearer
 router = APIRouter(prefix="/admin", tags=["Admin"])
 otp_router = APIRouter(prefix="/admin/otp", tags=["OTP"])
 
-# Configuration
+
 SECRET_KEY = os.getenv("SECRET_KEY", "asdfgh")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/login")
 
-# Request Models
+
 class AdminCreateRequest(BaseModel):
     first_name: str
     last_name: str
@@ -38,6 +38,14 @@ class OTPVerifyRequest(BaseModel):
 class OTPResendRequest(BaseModel):
     email: EmailStr
     user_id: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+    user_id: str
+    password: str
 
 # Response Models
 class AdminCreateResponse(BaseModel):
@@ -64,16 +72,19 @@ class OTPResendResponse(BaseModel):
     description: str
     data: dict
 
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-
 class ForgotPasswordResponse(BaseModel):
     status: bool
     status_code: int
     description: str
-    data: list    
+    data: list
 
-# Utility Functions
+class PasswordResetResponse(BaseModel):
+    status: bool
+    status_code: int
+    description: str
+    data: list
+
+
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
@@ -82,7 +93,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
 async def create_otp_record(email: str, user_id: str):
     OTPStorage.objects(email=email).delete()
-    otp_code = "3812"  # Fixed OTP for testing
+    otp_code = "3812"  
     expires_at = datetime.utcnow() + timedelta(minutes=5)
     OTPStorage(
         email=email,
@@ -90,13 +101,12 @@ async def create_otp_record(email: str, user_id: str):
         otp_code=otp_code,
         expires_at=expires_at
     ).save()
-    print(f"OTP for {email}: {otp_code}")  # For testing only
+    print(f"OTP for {email}: {otp_code}")  
     return otp_code
 
-# Dependency
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
-        status_code=401,
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
@@ -113,7 +123,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     return user
 
 # Routes
-
 @router.post("/create", response_model=AdminCreateResponse)
 def create_admin_user(request: AdminCreateRequest):
     if AdminUser.objects(email=request.email).first():
@@ -230,15 +239,12 @@ async def resend_otp(request: OTPResendRequest):
         }
     }
 
-# Add Forgot Password endpoint
 @router.post("/password/forgot", response_model=ForgotPasswordResponse)
 async def forgot_password(request: ForgotPasswordRequest):
     admin = AdminUser.objects(email=request.email).first()
     if not admin:
         raise HTTPException(status_code=404, detail="User not found")
-    
     await create_otp_record(email=request.email, user_id=admin.user_id)
-    
     return {
         "status": True,
         "status_code": 200,
@@ -246,3 +252,36 @@ async def forgot_password(request: ForgotPasswordRequest):
         "data": [{"email": admin.email}]
     }
 
+@router.post("/password/reset", response_model=PasswordResetResponse)
+async def reset_password(request: PasswordResetRequest):
+    
+    admin = AdminUser.objects(email=request.email, user_id=request.user_id).first()
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    
+    hashed_password = bcrypt.hashpw(
+        request.password.encode('utf-8'),
+        bcrypt.gensalt()
+    ).decode('utf-8')
+    
+    admin.password = hashed_password
+    admin.updated_at = datetime.utcnow()
+    admin.save()
+
+    return {
+        "status": True,
+        "status_code": status.HTTP_200_OK,
+        "description": "Password updated successfully",
+        "data": [{
+            "user_id": admin.user_id,
+            "email": admin.email
+        }]
+    }
+
+
+
+router.include_router(otp_router)
