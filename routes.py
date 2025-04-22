@@ -1,21 +1,24 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
-from mongoengine.errors import NotUniqueError
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from .models import AdminUser, OTPStorage
 import os
 import uuid
+import bcrypt
+from fastapi.security import OAuth2PasswordBearer
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 otp_router = APIRouter(prefix="/admin/otp", tags=["OTP"])
 
-
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-keep-it-safe")
+# Configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "asdfgh")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Models
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/login")
+
+# Request Models
 class AdminCreateRequest(BaseModel):
     first_name: str
     last_name: str
@@ -32,7 +35,11 @@ class OTPVerifyRequest(BaseModel):
     user_id: str
     otp: str
 
-# Responses
+class OTPResendRequest(BaseModel):
+    email: EmailStr
+    user_id: str
+
+# Response Models
 class AdminCreateResponse(BaseModel):
     status: bool
     status_code: int
@@ -51,17 +58,22 @@ class OTPVerifyResponse(BaseModel):
     description: str
     data: list
 
+class OTPResendResponse(BaseModel):
+    status: bool
+    status_code: int
+    description: str
+    data: dict
 
+# Utility Functions
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# Fixed OTP function
 async def create_otp_record(email: str, user_id: str):
     OTPStorage.objects(email=email).delete()
-    otp_code = "3812"  
+    otp_code = "3812"  # Fixed OTP for testing
     expires_at = datetime.utcnow() + timedelta(minutes=5)
     OTPStorage(
         email=email,
@@ -69,10 +81,30 @@ async def create_otp_record(email: str, user_id: str):
         otp_code=otp_code,
         expires_at=expires_at
     ).save()
-    print(f"Fixed OTP for {email}: {otp_code}")  
+    print(f"OTP for {email}: {otp_code}")  # For testing only
     return otp_code
 
+# Dependency
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Invalid credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = AdminUser.objects(user_id=user_id).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
 # Routes
+
 @router.post("/create", response_model=AdminCreateResponse)
 def create_admin_user(request: AdminCreateRequest):
     if AdminUser.objects(email=request.email).first():
@@ -81,6 +113,7 @@ def create_admin_user(request: AdminCreateRequest):
         raise HTTPException(status_code=400, detail="Phone already registered")
     user_id = str(uuid.uuid4())
     roles = ["Admin", "Editor"]
+    hashed_password = bcrypt.hashpw(request.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     access_token = create_access_token({"sub": user_id, "email": request.email, "roles": roles})
     admin = AdminUser(
         first_name=request.first_name,
@@ -88,7 +121,7 @@ def create_admin_user(request: AdminCreateRequest):
         user_id=user_id,
         email=request.email,
         phone=request.phone,
-        password=request.password,  
+        password=hashed_password,
         roles=roles,
         access_token=access_token
     )
@@ -96,7 +129,7 @@ def create_admin_user(request: AdminCreateRequest):
     return {
         "status": True,
         "status_code": 200,
-        "description": "admin account created",
+        "description": "Admin account created",
         "data": {
             "first_name": admin.first_name,
             "last_name": admin.last_name,
@@ -118,7 +151,7 @@ def create_admin_user(request: AdminCreateRequest):
 @router.post("/login", response_model=AdminLoginResponse)
 async def admin_login(request: AdminLoginRequest):
     admin = AdminUser.objects(email=request.email).first()
-    if not admin or admin.password != request.password:
+    if not admin or not bcrypt.checkpw(request.password.encode('utf-8'), admin.password.encode('utf-8')):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     await create_otp_record(email=request.email, user_id=admin.user_id)
     return {
@@ -171,3 +204,20 @@ def verify_otp(request: OTPVerifyRequest):
         "description": "Admin signIn successful",
         "data": [user_data]
     }
+
+@otp_router.post("/resend", response_model=OTPResendResponse)
+async def resend_otp(request: OTPResendRequest):
+    admin = AdminUser.objects(email=request.email, user_id=request.user_id).first()
+    if not admin:
+        raise HTTPException(status_code=404, detail="User not found")
+    await create_otp_record(email=request.email, user_id=request.user_id)
+    return {
+        "status": True,
+        "status_code": 200,
+        "description": "We have sent you access code via mail verification",
+        "data": {
+            "email": admin.email,
+            "user_id": admin.user_id
+        }
+    }
+
